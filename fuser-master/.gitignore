@@ -2,3 +2,6 @@
 /target
 .idea/
 logs/
+
+## for mac
+.DS_Store

@@ -13,7 +13,7 @@ if [ ! -f "target/debug/cos-fuse-demo" ]; then
 fi
 
 # 创建测试挂载点
-MOUNT_POINT="./test_mount"
+MOUNT_POINT="./mounted"
 CACHE_DIR="./test_cache"
 
 echo "创建测试目录..."
@@ -33,3 +33,5 @@ echo "卸载命令："
 echo "umount $MOUNT_POINT"
 echo ""
 echo "注意：实际运行需要配置有效的 COS 凭据"
+
+./target/debug/cos-fuse-demo --bucket cloudfs-fuse-1319262409 --region ap-chongqing --mount-point $MOUNT_POINT --cache-dir $CACHE_DIR
