@@ -107,6 +107,22 @@ fn main() {
         }
     };
 
+    // 检查挂载点是否为空目录
+    let is_empty = match mount_path.read_dir() {
+        Ok(mut entries) => entries.next().is_none(),
+        Err(e) => {
+            error!("Failed to read mount point directory: {}", e);
+            std::process::exit(1);
+        }
+    };
+    
+    if !is_empty {
+        error!("Mount point {} is not empty", mount_point);
+        std::process::exit(1);
+    }
+
+    info!("Mounting filesystem...");
+
     // 设置挂载选项
     let options = vec![
         MountOption::RW,           // 读写模式（虽然我们只实现读）
@@ -114,8 +130,6 @@ fn main() {
         MountOption::AutoUnmount,   // 自动卸载
         MountOption::AllowOther,   // 允许其他用户访问
     ];
-
-    info!("Mounting filesystem...");
 
     // 挂载文件系统
     match spawn_mount2(fs, &mount_path, &options) {
