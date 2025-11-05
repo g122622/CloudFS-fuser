@@ -1,9 +1,9 @@
 use anyhow::{anyhow, Result};
 use fuser::{
     Filesystem, FileAttr, FileType, KernelConfig, Request, ReplyAttr, ReplyData, ReplyDirectory,
-    ReplyEntry, ReplyOpen,
+    ReplyEntry, ReplyOpen, ReplyXattr, ReplyEmpty,
 };
-use libc::{ENOENT, ENOTDIR, EIO, EPERM};
+use libc::{ENOENT, ENOTDIR, EIO, EPERM, EACCES, ENOSYS, ENOATTR};
 use log::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -560,6 +560,89 @@ impl Filesystem for CosFilesystem {
             Err(e) => {
                 error!("Failed to read object {}: {}", object_key, e);
                 reply.error(EIO);
+            }
+        }
+    }
+    
+    fn access(&mut self, _req: &Request<'_>, ino: u64, mask: i32, reply: ReplyEmpty) {
+        debug!("Access: ino={}, mask={}", ino, mask);
+        
+        // 检查文件/目录是否存在
+        if self.get_path(ino).is_none() {
+            reply.error(ENOENT);
+            return;
+        }
+        
+        // 对于COS文件系统，我们假设所有文件都有读权限
+        // 写权限暂时不支持，因为COS是只读的
+        if mask & libc::W_OK != 0 {
+            // 拒绝写权限
+            reply.error(EACCES);
+        } else {
+            // 允许读和执行权限
+            reply.ok();
+        }
+    }
+    
+    fn getxattr(&mut self, _req: &Request<'_>, ino: u64, name: &OsStr, size: u32, reply: ReplyXattr) {
+        debug!("Getxattr: ino={}, name={:?}, size={}", ino, name, size);
+        
+        // 检查文件/目录是否存在
+        if self.get_path(ino).is_none() {
+            reply.error(ENOENT);
+            return;
+        }
+        
+        let name_str = name.to_string_lossy();
+        
+        // 处理 macOS Finder 特定的扩展属性
+        if name_str == "com.apple.FinderInfo" {
+            // 返回空的 FinderInfo（32字节）
+            let finder_info = vec![0u8; 32];
+            
+            if size == 0 {
+                // 返回属性大小
+                reply.size(finder_info.len() as u32);
+            } else if size >= finder_info.len() as u32 {
+                // 返回属性数据
+                reply.data(&finder_info);
+            } else {
+                reply.error(libc::ERANGE);
+            }
+        } else {
+            // 不支持其他扩展属性
+            reply.error(ENOATTR);
+        }
+    }
+    
+    fn listxattr(&mut self, _req: &Request<'_>, ino: u64, size: u32, reply: ReplyXattr) {
+        debug!("Listxattr: ino={}, size={}", ino, size);
+        
+        // 检查文件/目录是否存在
+        if self.get_path(ino).is_none() {
+            reply.error(ENOENT);
+            return;
+        }
+        
+        // 支持的扩展属性列表
+        let attrs = ["com.apple.FinderInfo"];
+        
+        if size == 0 {
+            // 计算所有属性名称的总长度（包括null终止符）
+            let total_size: usize = attrs.iter().map(|attr| attr.len() + 1).sum();
+            reply.size(total_size as u32);
+        } else {
+            // 构建属性名称列表
+            let mut attr_list = Vec::new();
+            for attr in &attrs {
+                attr_list.extend_from_slice(attr.as_bytes());
+                attr_list.push(0); // null 终止符
+            }
+            
+            if size >= attr_list.len() as u32 {
+                reply.data(&attr_list);
+            } else {
+                reply.error(libc::ERANGE);
             }
         }
     }
