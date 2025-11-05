@@ -5,6 +5,7 @@ use fuser::{
 };
 use libc::{EACCES, EIO, ENOATTR, ENOENT, ENOSYS, ENOTDIR, EPERM};
 use log::{debug, error, info, warn};
+use std::backtrace::Backtrace;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
@@ -102,6 +103,13 @@ impl CosFilesystem {
 
     /// 获取 inode 对应的路径
     fn get_path(&self, ino: u64) -> Option<&String> {
+        // 捕获调用栈用于调试
+        let backtrace = Backtrace::force_capture();
+        info!(
+            "get_path called with ino: {}, backtrace:\n{}",
+            ino, backtrace
+        );
+
         self.inode_to_path.get(&ino)
     }
 
@@ -469,7 +477,7 @@ impl Filesystem for CosFilesystem {
         offset: i64,
         mut reply: ReplyDirectory,
     ) {
-        debug!("Readdir: ino={}, offset={}", ino, offset);
+        info!("Readdir: ino={}, offset={}", ino, offset);
 
         let path = match self.get_path(ino) {
             Some(p) => p.clone(),
@@ -488,7 +496,7 @@ impl Filesystem for CosFilesystem {
 
         // 检查缓存中是否有该目录的条目
         let entries = if let Some(cached_entries) = self.dir_cache.get(&path) {
-            debug!("Using cached directory entries for: {}", path);
+            info!("Using cached directory entries for: {}", path);
             cached_entries.clone()
         } else {
             // 从COS获取目录条目并缓存
