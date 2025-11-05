@@ -1,5 +1,5 @@
 use clap::{Arg, Command};
-use fuser::{MountOption, spawn_mount2};
+use fuser::{spawn_mount2, MountOption};
 use log::{error, info};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -115,7 +115,7 @@ fn main() {
             std::process::exit(1);
         }
     };
-    
+
     if !is_empty {
         error!("Mount point {} is not empty", mount_point);
         std::process::exit(1);
@@ -125,34 +125,37 @@ fn main() {
 
     // 设置挂载选项
     let options = vec![
-        MountOption::RW,           // 读写模式（虽然我们只实现读）
+        MountOption::RO,                          // 只读模式（COS是只读的）
         MountOption::FSName("cosfs".to_string()), // 文件系统名称
-        MountOption::AutoUnmount,   // 自动卸载
-        MountOption::AllowOther,   // 允许其他用户访问
+        MountOption::AutoUnmount,                 // 自动卸载
+        MountOption::AllowOther,                  // 允许其他用户访问
+        MountOption::NoDev,                       // 禁用设备文件
+        MountOption::NoSuid,                      // 禁用SUID
+        MountOption::NoExec,                      // 禁用执行权限
     ];
 
     // 挂载文件系统
     match spawn_mount2(fs, &mount_path, &options) {
         Ok(_session) => {
             info!("Filesystem mounted successfully at {}", mount_point);
-            
+
             if !foreground {
                 info!("Running in background mode");
                 return;
             }
-            
+
             // 前台模式：等待信号
             info!("Running in foreground mode. Press Ctrl+C to unmount.");
-            
+
             // 设置信号处理
             let (tx, rx) = std::sync::mpsc::channel();
-            
+
             ctrlc::set_handler(move || {
                 info!("Received Ctrl+C, unmounting...");
                 let _ = tx.send(());
             })
             .expect("Error setting Ctrl-C handler");
-            
+
             // 等待信号
             if rx.recv().is_ok() {
                 info!("Unmounting filesystem...");
@@ -173,7 +176,7 @@ mod tests {
     #[test]
     fn test_command_line_parsing() {
         use clap::Parser;
-        
+
         // 这里可以添加命令行解析的测试
     }
 }
