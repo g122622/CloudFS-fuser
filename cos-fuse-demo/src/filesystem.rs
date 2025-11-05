@@ -357,6 +357,8 @@ impl Filesystem for CosFilesystem {
     }
     
     fn lookup(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: ReplyEntry) {
+        info!("Lookup: parent={}, name={}", parent, name.display());
+        
         let name_str = match name.to_str() {
             Some(s) => s,
             None => {
@@ -412,6 +414,8 @@ impl Filesystem for CosFilesystem {
     }
     
     fn getattr(&mut self, _req: &Request<'_>, ino: u64, _fh: Option<u64>, reply: ReplyAttr) {
+        info!("Getattr: ino={}", ino);
+        
         let path = match self.get_path(ino) {
             Some(p) => p,
             None => {
@@ -444,6 +448,8 @@ impl Filesystem for CosFilesystem {
     }
     
     fn readdir(&mut self, _req: &Request<'_>, ino: u64, _fh: u64, offset: i64, mut reply: ReplyDirectory) {
+        info!("Readdir: ino={}, offset={}", ino, offset);
+        
         let path = match self.get_path(ino) {
             Some(p) => p.clone(),
             None => {
@@ -507,6 +513,8 @@ impl Filesystem for CosFilesystem {
     }
     
     fn open(&mut self, _req: &Request<'_>, ino: u64, _flags: i32, reply: ReplyOpen) {
+        info!("Open: ino={}", ino);
+        
         let path = match self.get_path(ino) {
             Some(p) => p,
             None => {
