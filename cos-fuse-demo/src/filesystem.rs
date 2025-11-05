@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 
@@ -46,12 +47,18 @@ pub struct CosFilesystem {
     
     /// 对象列表缓存（用于构建虚拟目录结构）
     object_list: Vec<String>,
+    
+    /// 共享的异步运行时
+    runtime: Arc<Runtime>,
 }
 
 impl CosFilesystem {
     pub fn new(bucket: String, region: String, cache_dir: &Path) -> Result<Self> {
         let cos_client = CosClient::new(bucket, region);
         let cache = Cache::new(cache_dir, 1000)?;
+        
+        // 创建共享的运行时
+        let runtime = Runtime::new().map_err(|e| anyhow!("Failed to create runtime: {}", e))?;
         
         let mut fs = Self {
             cos_client,
@@ -60,6 +67,7 @@ impl CosFilesystem {
             path_to_inode: HashMap::new(),
             next_inode: FIRST_DYNAMIC_INODE,
             object_list: Vec::new(),
+            runtime: Arc::new(runtime),
         };
         
         // 初始化根目录
@@ -231,10 +239,12 @@ impl CosFilesystem {
             return true;
         }
         
-        // 检查是否有任何对象以该路径为前缀
+        // 检查是否有任何对象以该路径为前缀（后面跟着'/'）
+        let path_with_slash = if path == "/" { "/".to_string() } else { format!("{}/", path.trim_start_matches('/')) };
+        
         self.object_list.iter().any(|obj| {
-            obj.starts_with(&path.trim_start_matches('/')) && 
-            obj != path.trim_start_matches('/')
+            let obj_path = format!("/{}", obj);
+            obj_path.starts_with(&path_with_slash) && obj_path != path
         })
     }
     
@@ -324,10 +334,7 @@ impl Filesystem for CosFilesystem {
         info!("Initializing COS filesystem");
         
         // 在初始化时刷新对象列表
-        let rt = Runtime::new().map_err(|e| {
-            error!("Failed to create runtime: {}", e);
-            EIO
-        })?;
+        let rt = Arc::clone(&self.runtime);
         
         if let Err(e) = rt.block_on(self.refresh_object_list_async()) {
             error!("Failed to initialize object list: {}", e);
@@ -387,14 +394,7 @@ impl Filesystem for CosFilesystem {
         if self.object_list.contains(&object_key.to_string()) {
             let ino = self.get_or_create_inode(&target_path);
             
-            let rt = match Runtime::new() {
-                Ok(rt) => rt,
-                Err(e) => {
-                    error!("Failed to create runtime: {}", e);
-                    reply.error(EIO);
-                    return;
-                }
-            };
+            let rt = Arc::clone(&self.runtime);
             
             match rt.block_on(self.get_object_metadata(object_key)) {
                 Ok(meta) => {
@@ -428,14 +428,7 @@ impl Filesystem for CosFilesystem {
         } else {
             let object_key = path.trim_start_matches('/');
             
-            let rt = match Runtime::new() {
-                Ok(rt) => rt,
-                Err(e) => {
-                    error!("Failed to create runtime: {}", e);
-                    reply.error(EIO);
-                    return;
-                }
-            };
+            let rt = Arc::clone(&self.runtime);
             
             match rt.block_on(self.get_object_metadata(object_key)) {
                 Ok(meta) => {
@@ -497,10 +490,15 @@ impl Filesystem for CosFilesystem {
         }
         
         // 添加目录条目
-        for (i, entry) in entries.iter().enumerate().skip(offset as usize - 2) {
-            if reply.add(entry.ino, (i + 2) as i64, entry.file_type, &entry.name) {
-                continue;
-            } else {
+        let start_index = if offset <= 2 {
+            0
+        } else {
+            (offset - 2) as usize
+        };
+        
+        for (i, entry) in entries.iter().enumerate().skip(start_index) {
+            let entry_index = (i + 2) as i64;
+            if !reply.add(entry.ino, entry_index, entry.file_type, &entry.name) {
                 break;
             }
         }
@@ -546,14 +544,7 @@ impl Filesystem for CosFilesystem {
         
         let object_key = path.trim_start_matches('/');
         
-        let rt = match Runtime::new() {
-            Ok(rt) => rt,
-            Err(e) => {
-                error!("Failed to create runtime: {}", e);
-                reply.error(EIO);
-                return;
-            }
-        };
+        let rt = Arc::clone(&self.runtime);
         
         match rt.block_on(self.get_object_content(object_key)) {
             Ok(content) => {
