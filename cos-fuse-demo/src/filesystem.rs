@@ -3,7 +3,7 @@ use fuser::{
     FileAttr, FileType, Filesystem, KernelConfig, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty,
     ReplyEntry, ReplyOpen, ReplyXattr, Request,
 };
-use libc::{EACCES, EIO, ENOATTR, ENOENT, ENOSYS, ENOTDIR, EPERM};
+use libc::{EACCES, EIO, ENOATTR, ENOENT, ENOSYS, ENOTDIR, EPERM, ENODATA};
 use log::{debug, error, info, warn};
 use std::backtrace::Backtrace;
 use std::collections::HashMap;
@@ -647,73 +647,31 @@ impl Filesystem for CosFilesystem {
         }
     }
 
-    fn getxattr(
-        &mut self,
-        _req: &Request<'_>,
-        ino: u64,
-        name: &OsStr,
-        size: u32,
-        reply: ReplyXattr,
-    ) {
-        debug!("Getxattr: ino={}, name={:?}, size={}", ino, name, size);
-
-        // 检查文件/目录是否存在
-        if self.get_path(ino).is_none() {
-            reply.error(ENOENT);
-            return;
-        }
-
-        let name_str = name.to_string_lossy();
-
-        // 处理 macOS Finder 特定的扩展属性
-        if name_str == "com.apple.FinderInfo" {
-            // 返回空的 FinderInfo（32字节）
-            let finder_info = vec![0u8; 32];
-
-            if size == 0 {
-                // 返回属性大小
-                reply.size(finder_info.len() as u32);
-            } else if size >= finder_info.len() as u32 {
-                // 返回属性数据
-                reply.data(&finder_info);
-            } else {
-                reply.error(libc::ERANGE);
-            }
+    fn listxattr(&mut self, _req: &Request<'_>, _ino: u64, size: u32, reply: ReplyXattr) {
+        // 不支持扩展属性：返回空列表
+        if size == 0 {
+            reply.size(0); // 只需返回所需 buffer 大小（0）
         } else {
-            // 不支持其他扩展属性
-            reply.error(ENOATTR);
+            reply.data(&[]); // 实际返回空数据
         }
     }
 
-    fn listxattr(&mut self, _req: &Request<'_>, ino: u64, size: u32, reply: ReplyXattr) {
-        debug!("Listxattr: ino={}, size={}", ino, size);
-
-        // 检查文件/目录是否存在
-        if self.get_path(ino).is_none() {
-            reply.error(ENOENT);
-            return;
-        }
-
-        // 支持的扩展属性列表
-        let attrs = ["com.apple.FinderInfo"];
-
+    fn getxattr(
+        &mut self,
+        _req: &Request<'_>,
+        _ino: u64,
+        _name: &std::ffi::OsStr,
+        size: u32,
+        reply: ReplyXattr,
+    ) {
+        // 不支持任何扩展属性
         if size == 0 {
-            // 计算所有属性名称的总长度（包括null终止符）
-            let total_size: usize = attrs.iter().map(|attr| attr.len() + 1).sum();
-            reply.size(total_size as u32);
+            // 应用程序只查询值的大小（通常用于分配 buffer）
+            // 因为属性不存在，返回 0 或错误均可，但标准做法是返回错误
+            reply.error(ENODATA);
         } else {
-            // 构建属性名称列表
-            let mut attr_list = Vec::new();
-            for attr in &attrs {
-                attr_list.extend_from_slice(attr.as_bytes());
-                attr_list.push(0); // null 终止符
-            }
-
-            if size >= attr_list.len() as u32 {
-                reply.data(&attr_list);
-            } else {
-                reply.error(libc::ERANGE);
-            }
+            // 尝试读取不存在的属性
+            reply.error(ENODATA);
         }
     }
 }
