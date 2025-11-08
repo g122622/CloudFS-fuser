@@ -492,59 +492,62 @@ impl Filesystem for CosFilesystem {
             return;
         }
 
-        // 检查缓存中是否有该目录的条目
-        let entries = if let Some(cached_entries) = self.dir_cache.get(&path) {
+        // 获取或缓存目录条目（确保在本次打开期间视图一致）
+        let entries = if let Some(cached) = self.dir_cache.get(&path) {
             info!("Using cached directory entries for: {}", path);
-            cached_entries.clone()
+            cached.clone()
         } else {
-            // 从COS获取目录条目并缓存
-            let entries = self.list_directory(&path);
-            self.dir_cache.insert(path.clone(), entries.clone());
-            entries
+            let fetched = self.list_directory(&path);
+            self.dir_cache.insert(path.clone(), fetched.clone());
+            fetched
         };
 
-        let mut index = 0;
+        // 总条目数：. (0), .. (1), + N 个真实条目
+        let total_virtual_entries = 2 + entries.len() as i64;
 
+        // 如果 offset 超出范围，直接返回空
+        if offset >= total_virtual_entries {
+            reply.ok();
+            return;
+        }
+
+        // 1. 发送 "." （offset = 0）
         if offset == 0 {
-            // 添加 "." 和 ".."
-            if reply.add(ino, index, FileType::Directory, ".") {
-                index += 1;
-            } else {
-                reply.ok();
-                return;
-            }
-
-            // 获取父目录 inode
-            let parent_ino = if path == "/" {
-                ino // 根目录的父目录是自己
-            } else {
-                let parent_path = Path::new(&path).parent().unwrap_or(Path::new("/"));
-                let parent_path_str = parent_path.to_string_lossy();
-                self.path_to_inode
-                    .get(&*parent_path_str)
-                    .copied()
-                    .unwrap_or(ROOT_INODE)
-            };
-
-            if reply.add(parent_ino, index, FileType::Directory, "..") {
-                index += 1;
-            } else {
+            if !reply.add(ino, 0, FileType::Directory, ".") {
                 reply.ok();
                 return;
             }
         }
 
-        // 添加目录条目
-        let start_index = if offset <= 2 {
-            0
-        } else {
-            (offset - 2) as usize
-        };
+        // 2. 发送 ".." （offset = 1）
+        if offset <= 1 {
+            let parent_ino = if path == "/" {
+                ino // 根目录的父是自己
+            } else {
+                let parent_path = Path::new(&path).parent().unwrap_or(Path::new("/"));
+                let parent_path_str = parent_path.to_string_lossy().to_string();
+                *self
+                    .path_to_inode
+                    .get(&parent_path_str)
+                    .unwrap_or(&ROOT_INODE)
+            };
+            if !reply.add(parent_ino, 1, FileType::Directory, "..") {
+                reply.ok();
+                return;
+            }
+        }
 
-        for (i, entry) in entries.iter().enumerate().skip(start_index) {
-            let entry_index = (i + 2) as i64;
-            if !reply.add(entry.ino, entry_index, entry.file_type, &entry.name) {
-                break;
+        // 3. 发送真实条目（offset 从 2 开始）
+        if offset >= 2 {
+            let start_index = (offset - 2) as usize;
+            if start_index < entries.len() {
+                for (idx, entry) in entries.iter().enumerate().skip(start_index) {
+                    let this_offset = (idx + 2) as i64; // idx 是原始索引，所以 offset 稳定
+                    if !reply.add(entry.ino, this_offset, entry.file_type, &entry.name) {
+                        // 缓冲区满，停止添加
+                        break;
+                    }
+                }
             }
         }
 
