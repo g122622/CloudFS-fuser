@@ -128,7 +128,6 @@ fn main() {
         MountOption::RO,                          // 只读模式（COS是只读的）
         MountOption::FSName("cosfs".to_string()), // 文件系统名称
         MountOption::AutoUnmount,                 // 自动卸载
-        MountOption::AllowOther,                  // 允许其他用户访问
         MountOption::NoDev,                       // 禁用设备文件
         MountOption::NoSuid,                      // 禁用SUID
         MountOption::NoExec,                      // 禁用执行权限

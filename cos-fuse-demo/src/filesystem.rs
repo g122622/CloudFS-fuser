@@ -477,8 +477,6 @@ impl Filesystem for CosFilesystem {
         offset: i64,
         mut reply: ReplyDirectory,
     ) {
-        info!("Readdir: ino={}, offset={}", ino, offset);
-
         let path = match self.get_path(ino) {
             Some(p) => p.clone(),
             None => {
@@ -487,7 +485,7 @@ impl Filesystem for CosFilesystem {
             }
         };
 
-        debug!("Readdir: ino={}, path={}, offset={}", ino, path, offset);
+        info!("Readdir: ino={}, path={}, offset={}", ino, path, offset);
 
         if !self.is_directory(&path) {
             reply.error(ENOTDIR);

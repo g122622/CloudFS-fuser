@@ -14,9 +14,18 @@
 
 ## 系统要求
 
+### macOS
+
 - macOS (已在 M1 MacBook 上测试)
 - Rust 1.70+
-- FUSE for macOS (macFUSE)
+- FUSE for macOS (macFuse)
+
+### Windows WSL2
+
+- Windows 10/11 with WSL2
+- Ubuntu 20.04+ in WSL2
+- Rust 1.70+
+- libfuse-dev package
 
 ## 安装依赖
 
@@ -27,10 +36,17 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source ~/.cargo/env
 ```
 
-### 2. 安装 macFUSE
+### 2. 安装 macFUSE (macOS)
 
 ```bash
 brew install --cask macfuse
+```
+
+### 2. 安装 FUSE (WSL2)
+
+```bash
+sudo apt update
+sudo apt install -y libfuse-dev pkg-config
 ```
 
 ## 构建项目
@@ -42,7 +58,7 @@ cargo build --release
 
 ## 使用方法
 
-### 基本用法
+### 基本用法 (macOS)
 
 ```bash
 # 创建挂载点
@@ -54,6 +70,31 @@ mkdir -p /mnt/cosfs
   --region ap-beijing \
   --mount-point /mnt/cosfs \
   --cache-dir /tmp/cosfs_cache \
+  --foreground
+```
+
+### 基本用法 (WSL2)
+
+由于 WSL2 的架构限制，FUSE 挂载只能在 WSL2 的原生 Linux 文件系统中进行，不能在挂载自 Windows 的路径（如 `/mnt/c`）上执行。
+
+```bash
+# 克隆项目到 WSL2 的原生文件系统中（例如 ~/projects）
+cd ~
+git clone <repository-url> cos-fuse-demo
+cd cos-fuse-demo
+
+# 构建项目
+cargo build
+
+# 创建挂载点（必须在 WSL2 原生文件系统中）
+mkdir -p ~/cos-mount
+
+# 挂载 COS bucket
+./target/debug/cos-fuse-demo \
+  --bucket your-bucket-name \
+  --region ap-beijing \
+  --mount-point ~/cos-mount \
+  --cache-dir ~/cos-cache \
   --foreground
 ```
 
@@ -156,7 +197,7 @@ cos-fuse-demo/
 ### 挂载失败
 
 - 检查挂载点目录是否存在且有权限
-- 确认 macFUSE 已正确安装
+- 确认 FUSE 已正确安装
 - 检查日志输出中的错误信息
 
 ### 文件读取失败
@@ -170,6 +211,30 @@ cos-fuse-demo/
 - 检查缓存目录的磁盘空间
 - 调整缓存大小配置
 - 启用调试日志查看详细操作信息
+
+### WSL2 特定问题
+
+#### fusermount: mounting over filesystem type 0x01021997 is forbidden
+
+这是由于在 WSL2 中尝试在 V9FS 文件系统（用于挂载 Windows 路径）上挂载 FUSE 文件系统导致的。解决方法是确保项目和挂载点都在 WSL2 的原生 Linux 文件系统中：
+
+1. 将项目克隆或复制到 `~/` 目录下（或其他 WSL2 原生文件系统路径）
+2. 确保挂载点也在 WSL2 原生文件系统中（如 `~/mount-point`）
+3. 不要在 `/mnt/` 下的任何路径中进行挂载操作
+
+示例：
+
+```bash
+# 正确做法 - 在 WSL2 原生文件系统中操作
+cd ~
+mkdir cos-project
+cd cos-project
+# 进行构建和挂载操作
+
+# 错误做法 - 在 Windows 挂载路径中操作
+cd /mnt/c/projects/cos-project
+# 这会导致 "mounting over filesystem type 0x01021997 is forbidden" 错误
+```
 
 ## 许可证
 
