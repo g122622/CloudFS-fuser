@@ -3,7 +3,7 @@ use fuser::{
     FileAttr, FileType, Filesystem, KernelConfig, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty,
     ReplyEntry, ReplyOpen, ReplyXattr, Request,
 };
-use libc::{EACCES, EIO, ENOATTR, ENOENT, ENOSYS, ENOTDIR, EPERM, ENODATA};
+use libc::{EACCES, EIO, ENODATA, ENOENT, ENOTDIR, EPERM};
 use log::{debug, error, info, warn};
 use std::backtrace::Backtrace;
 use std::collections::HashMap;
@@ -11,7 +11,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 use tokio::runtime::Runtime;
 
 use crate::cache::Cache;
@@ -485,68 +485,48 @@ impl Filesystem for CosFilesystem {
             }
         };
 
-        info!("Readdir: ino={}, path={}, offset={}", ino, path, offset);
-
         if !self.is_directory(&path) {
             reply.error(ENOTDIR);
             return;
         }
 
-        // 获取或缓存目录条目（确保在本次打开期间视图一致）
+        // --- 修复点：避免在 or_insert_with 中捕获 self ---
         let entries = if let Some(cached) = self.dir_cache.get(&path) {
-            info!("Using cached directory entries for: {}", path);
             cached.clone()
         } else {
-            let fetched = self.list_directory(&path);
-            self.dir_cache.insert(path.clone(), fetched.clone());
-            fetched
+            let listed = self.list_directory(&path);
+            self.dir_cache.insert(path.clone(), listed.clone());
+            listed
         };
 
-        // 总条目数：. (0), .. (1), + N 个真实条目
-        let total_virtual_entries = 2 + entries.len() as i64;
+        // 构建完整 entry 列表
+        let mut all_entries = Vec::with_capacity(entries.len() + 2);
 
-        // 如果 offset 超出范围，直接返回空
-        if offset >= total_virtual_entries {
-            reply.ok();
-            return;
-        }
+        // "."
+        all_entries.push((ino, FileType::Directory, ".".to_string()));
 
-        // 1. 发送 "." （offset = 0）
-        if offset == 0 {
-            if !reply.add(ino, 0, FileType::Directory, ".") {
-                reply.ok();
-                return;
-            }
-        }
+        // ".."
+        let parent_ino = if path == "/" {
+            ino
+        } else {
+            let parent_path = Path::new(&path).parent().unwrap_or(Path::new("/"));
+            let parent_path_str = parent_path.to_string_lossy().to_string();
+            *self
+                .path_to_inode
+                .get(&parent_path_str)
+                .unwrap_or(&ROOT_INODE)
+        };
+        all_entries.push((parent_ino, FileType::Directory, "..".to_string()));
 
-        // 2. 发送 ".." （offset = 1）
-        if offset <= 1 {
-            let parent_ino = if path == "/" {
-                ino // 根目录的父是自己
-            } else {
-                let parent_path = Path::new(&path).parent().unwrap_or(Path::new("/"));
-                let parent_path_str = parent_path.to_string_lossy().to_string();
-                *self
-                    .path_to_inode
-                    .get(&parent_path_str)
-                    .unwrap_or(&ROOT_INODE)
-            };
-            if !reply.add(parent_ino, 1, FileType::Directory, "..") {
-                reply.ok();
-                return;
-            }
-        }
+        // 真实条目
+        all_entries.extend(entries.into_iter().map(|e| (e.ino, e.file_type, e.name)));
 
-        // 3. 发送真实条目（offset 从 2 开始）
-        if offset >= 2 {
-            let start_index = (offset - 2) as usize;
-            if start_index < entries.len() {
-                for (idx, entry) in entries.iter().enumerate().skip(start_index) {
-                    let this_offset = (idx + 2) as i64; // idx 是原始索引，所以 offset 稳定
-                    if !reply.add(entry.ino, this_offset, entry.file_type, &entry.name) {
-                        // 缓冲区满，停止添加
-                        break;
-                    }
+        // 发送目录项
+        for (index, (ino, kind, name)) in all_entries.into_iter().enumerate() {
+            let next_offset = (index + 1) as i64;
+            if (index as i64) >= offset {
+                if reply.add(ino, next_offset, kind, &name) {
+                    break; // buffer full
                 }
             }
         }
